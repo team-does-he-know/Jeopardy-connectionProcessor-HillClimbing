@@ -25,15 +25,13 @@ def main():
 
         cursor = connection.cursor()
         #everything in this section is choosing the categories.
-        cursor.execute("select count(id) from categories") #how many entries exist in the table
-        totNumberCategories = cursor.fetchone()[0] #realistically 0 should just be the count
+        cursor.execute("select count(id) from categories") 
+        totNumberCategories = cursor.fetchone()[0] 
         cursor.execute("select id from categories")
         for m in range(totNumberCategories):
             categoryOptions.append(cursor.fetchone()[0]) #List of all id's but with the list's organizaton
-        print(f' Yo this is the number of possibilities of categories {totNumberCategories}')
 
-        for n in range(numCategories):
-            category[n] = categoryOptions[random.randint(0, len(categoryOptions)-1)] #can select the same category twice. MAKE A FIX AFTER IT WORKS HUNTER
+        category = random.sample(categoryOptions, numCategories) #Today I learned the random module had this. Tried a while loop to fix the duplicate category problem, but that didn't work /:
         print(f"category is {category}")
         
 
@@ -44,7 +42,6 @@ def main():
         factoidContainingArray = FactoidPicker(mainQuery, getFactoidInfoQuery, numCategories, numAnswersPerCategory, cursor, category, oneCatFactoids) #Get the factoids I'm starting with
 
         for categoryNumber in range(numCategories):
-            print("We're moving")
             bestArray, bestScore = HillClimbingFunction(cursor, factoidContainingArray[categoryNumber], mainQuery, category, categoryNumber)
             for factoidAmount in range(numAnswersPerCategory):
                 cursor.execute(getFactoidInfoQuery, (bestArray[factoidAmount],))
@@ -74,7 +71,7 @@ def main():
 #Picks all the initial factoids before hill climbing
 def FactoidPicker(mainQuery, getFactoidInfoQuery, numCategories, numAnswersPerCategory, cursor, category, oneCatFactoids):
     factoidContainingArray = []
-    for i in range(numCategories): #This should run times equivalent to how many categories. Outputs factoidContainingArray which houses every group of factoids
+    for i in range(numCategories): #run times equivalent to how many categories. Outputs factoidContainingArray which houses every group of factoids
             if i != 0:
                 factoidContainingArray.append(oneCatFactoids)
                 oneCatFactoids = []
@@ -83,26 +80,17 @@ def FactoidPicker(mainQuery, getFactoidInfoQuery, numCategories, numAnswersPerCa
                 
                 
                 factoidID = randomFactoidState(cursor, mainQuery, category, i, m)
-                print(f"Is it taking longer after or before this? {factoidID}")
                 cursor.execute(getFactoidInfoQuery, (factoidID,))
                 answer = cursor.fetchone()
                 if answer is not None:
-                                            #"factoidID": This is what I'm storing. I just need the id here though
                     oneCatFactoids.append(answer[0]
-                                        #This is where answer stuff was originally stored. Prob delete later, but for now I'm just commenting it for reference.
-                                        #, #This naming scheme is exceptionally confusing. Gl OZ
-                                    #"Answer": answer[3],  #Jeopardy will say this one
-                                    #"Question": answer[2] #The user will say this one
                                     )
-                print(f"What is happening? i {i} and m {m} and oneCatFactoids{oneCatFactoids}")
             categoryQuery = ("Select title from categories where id = ?")
-            print("Categories")
-            for i in range(len(category)):
-                cursor.execute(categoryQuery, (category[i],))
-                print(cursor.fetchone())
-            print("Here's one of the category's factoids homeslice")
-            print(oneCatFactoids)
 
+    print("Categories")
+    for i in range(len(category)):
+        cursor.execute(categoryQuery, (category[i],))
+        print(cursor.fetchone())
     factoidContainingArray.append(oneCatFactoids)
     print(f"final output hopefully {factoidContainingArray}")
 
@@ -114,30 +102,34 @@ def randomFactoidState(cursor, mainQuery, category, i, m):
     seen = 0
 
     for (candidateID,) in cursor: #Apparently this is called reservoir sampling (thanks stack overflow) Before this I was getting all the rows and uh
-                                              #My very strong desktop ran out of memory. So this was my solution
+                                              #My very strong desktop ran out of memory. So this was my solution. Was I probably doing it wrong, yes. But I don't have to deal with that
+                                              #anymore now. so ha
         seen += 1
         if random.randrange(seen) == 0:
             factoidID = candidateID
 
-            if factoidID is None:
-                continue
+    if factoidID is None: #there's some categories that don't have high difficulty questions. This catches those. There had better not be categories that don't have 5 questions period, 
+                            #Cause I'm not accounting for that unless it actually becomes a problem. Lucky this problem came up because of whoever "darren korb" is
+        noMoreDifficultQuestions = "select factoids.id from factoid_categories left join factoids on factoid_categories.factoid_id = factiods.id where factoid_cateogries.category_id = ?"
+        cursor.execute(noMoreDifficultQuestions, (category[i],))
+        seen = 0
+        for (candidateID,) in cursor:
+            seen += 1
+            if random.randrange(seen) == 0:
+                factoidID = candidateID
     return factoidID
 
 
-def HillClimbingFunction(cursor, factoidArray, mainQuery, category, categoryNumber): #This is mostly a placeholder. It just returns a random selection of stuff   
-    answer = []
-    restarts = 2
-    generations = 2
-    currentState = -1
-    bestState = -1
+def HillClimbingFunction(cursor, factoidArray, mainQuery, category, categoryNumber): 
+    restarts = 50
+    generations = 50
     bestScore = float("-inf")
 
     for _ in range(restarts):
-        #Is this supposed to be the entire array of factoids, or one specific point?
+        #Changed dimitri's idea a bit based on what I had. Using the full array instead of just individual states.
         currentScore = evaluate(factoidArray, cursor)
 
-        # Climb the local hill by accepting uphill moves immediately
-        for _ in range(generations):
+        for _ in range(generations):#climb uphill moves automatically
             mutatedArray = mutate(cursor, factoidArray, mainQuery, category, categoryNumber)
             mutatedScore = evaluate(mutatedArray, cursor)
 
@@ -145,7 +137,7 @@ def HillClimbingFunction(cursor, factoidArray, mainQuery, category, categoryNumb
                 factoidArray = mutatedArray
                 currentScore = mutatedScore
 
-        # Track the global optimum across all restarts
+        #track optimum
         if currentScore > bestScore:
             bestArray = factoidArray
             bestScore = currentScore
@@ -153,38 +145,40 @@ def HillClimbingFunction(cursor, factoidArray, mainQuery, category, categoryNumb
     return bestArray, bestScore
 
 def evaluate(factoidArray, cursor):
-    factoidsAmount = 5
     score = 0
     tagArray = []
+    #Dimitri's response on discord minus the two parts I have to ask
     #So here is where we incorporate tags. 
     #If there is no matching factoid tags compared to the rest of the factoids in the current state, then you subtract points.
     #If there is 1 matching factoid tags, then you add a point.
     #If there is 2 matching factoid tags, then you add two points.
     #If there is 3 or more matching factoid tags, then you add three+ points depending on how much continued overlap.
-    tagQuery = ("Select tag_id from factoid_tags left join factoids where factoids.id = ?")
-    for n in range(factoidsAmount): #There's 5 factoids per. That's not changing.
-        wasMatchingTag = False
-        cursor.execute(tagQuery, (factoidArray[n],))
-        tagID = cursor.fetchall()
-
-        if tagID in tagArray:
-            score = 0
-            for m in range(len(tagArray)):
-                if tagID == tagArray[m]:
-                    score += 1
-            wasMatchingTag = True
-        else:
-            tagArray.append(tagID)
-
-        if wasMatchingTag == False:
-            score -= 1
+    tagQuery = ("Select tag_id from factoid_tags where factoid_id = ?")
+  
+    for factoid_id in factoidArray:
+        cursor.execute(tagQuery, (factoid_id,))
+        #Apparently this wasn't working properly because in was checking based off of it being a list with all the tags. None had that. 
+        #But making this into a set should work
+        tags = {row[0] for row in cursor.fetchall()}
+        tagArray.append(tags)
+        
+    #need to compare every factoid to every other factoid to figure out if there's equivalences
+    #That then is reflected in the shared tags amount. according to dimitri's stuff, I think adding that is the equivalence?
+    for i in range(len(tagArray)):
+        for j in range(i + 1, len(tagArray)):
+            sharedTagsAmount = len(tagArray[i] & tagArray[j])
+            
+            if sharedTagsAmount > 0:
+                score += sharedTagsAmount
+            else:
+                score -= 1
 
     return score
 
 def mutate(cursor, factoidArray, mainQuery, category, categoryNumber):
     candidate = factoidArray.copy()
-    selectedIndexToMutate = random.randint(0,4)
-    #selectedIndex should work for the difficulty considering the numbers in the index should match the difficulty?
+    selectedIndexToMutate = random.randrange(len(candidate))
+    #selectedIndex should work for the difficulty considering the numbers in the index should match the difficulty - 1. I think?
     candidate[selectedIndexToMutate] = randomFactoidState(cursor, mainQuery, category, categoryNumber, selectedIndexToMutate)    
 
     return candidate
